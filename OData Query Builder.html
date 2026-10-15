@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OData Query Builder</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mu:#6a737d;--bd:#d8dce1;--ac:#0a6ed1;--code:#0f1720;--codetx:#d6e2f0;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12151a;--card:#1b2027;--tx:#e6e9ed;--mu:#97a1ad;--bd:#2e353f;--ac:#4da3ff;--code:#0b0e12;--codetx:#cfe0f5;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12151a;--card:#1b2027;--tx:#e6e9ed;--mu:#97a1ad;--bd:#2e353f;--ac:#4da3ff;--code:#0b0e12;--codetx:#cfe0f5;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}h1{font-size:20px;margin:0 0 2px}.sub{color:var(--mu);margin:0 0 14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:0 0 8px}
+input,select,textarea,button{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:5px 8px;max-width:100%}
+textarea{width:100%;height:90px;font:12px ui-monospace,Menlo,monospace}button{cursor:pointer}button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}.row>input[type=text]{flex:1;min-width:120px}
+.fields{max-height:210px;overflow:auto;border:1px solid var(--bd);border-radius:6px;padding:4px 8px}
+.fields label{display:flex;gap:6px;align-items:baseline;padding:2px 0}.fields small{color:var(--mu)}
+.tabs{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}.tabs button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+pre{margin:0;background:var(--code);color:var(--codetx);padding:12px;border-radius:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Menlo,monospace;min-height:80px}
+.badge{display:inline-block;background:var(--ac);color:#fff;border-radius:10px;padding:0 8px;font-size:12px;margin-left:6px}.err{color:#d93025}.mu{color:var(--mu)}
+</style></head><body><div class="wrap">
+<h1>OData Query Builder</h1><p class="sub">Paste $metadata, pick fields, filters and expands, copy the URL or UI5 code. Runs fully offline.</p>
+<div class="grid"><div>
+<div class="card"><h2>1 · Service</h2>
+<div class="row"><input type="text" id="base" value="https://services.odata.org/V2/Northwind/Northwind.svc" placeholder="Service root URL"></div>
+<textarea id="xml" placeholder="Paste $metadata XML here…"></textarea>
+<div class="row" style="margin-top:6px"><button class="p" id="load">Parse metadata</button><button id="s2">Sample V2 (SAP)</button><button id="s4">Sample V4</button>
+<label class="mu">or <input type="file" id="file" accept=".xml"></label></div><div id="msg" class="mu"></div></div>
+<div id="builder" hidden>
+<div class="card"><h2>2 · Entity set</h2><select id="es"></select></div>
+<div class="card"><h2>$select</h2><div class="fields" id="sel"></div></div>
+<div class="card"><h2>$filter</h2><div id="flt"></div><div class="row"><button id="addf">+ Add filter</button><select id="join"><option value="and">AND</option><option value="or">OR</option></select></div></div>
+<div class="card"><h2>$expand</h2><div class="fields" id="exp"></div></div>
+<div class="card"><h2>Paging &amp; order</h2><div class="row">
+<select id="ob"></select><select id="dir"><option value="asc">asc</option><option value="desc">desc</option></select></div>
+<div class="row">$top <input type="number" id="top" min="0" style="width:80px"> $skip <input type="number" id="skip" min="0" style="width:80px">
+<label><input type="checkbox" id="cnt"> count</label></div></div>
+</div></div>
+<div><div class="card" style="position:sticky;top:8px"><h2>Output <span id="ver" class="badge" hidden></span></h2>
+<div class="tabs" id="tabs"></div><pre id="out">Load metadata to start.</pre>
+<div class="row" style="margin-top:8px"><button class="p" id="copy">Copy</button><span id="ok" class="mu"></span></div></div></div></div></div>
+<script>
+const $=s=>document.querySelector(s);
+const SAMPLE_V2=`<edmx:Edmx Version="1.0" xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" xmlns:sap="http://www.sap.com/Protocols/SAPData"><edmx:DataServices m:DataServiceVersion="2.0"><Schema Namespace="NW" xmlns="http://schemas.microsoft.com/ado/2008/09/edm">
+<EntityType Name="Product"><Key><PropertyRef Name="ProductID"/></Key>
+<Property Name="ProductID" Type="Edm.Int32" Nullable="false" sap:label="Product ID"/>
+<Property Name="ProductName" Type="Edm.String" sap:label="Product Name"/>
+<Property Name="UnitPrice" Type="Edm.Decimal" sap:label="Unit Price"/>
+<Property Name="Discontinued" Type="Edm.Boolean" sap:label="Discontinued" sap:sortable="false"/>
+<Property Name="ReleaseDate" Type="Edm.DateTime" sap:label="Release Date"/>
+<Property Name="InternalRef" Type="Edm.Guid" sap:label="Internal Ref" sap:filterable="false" sap:sortable="false"/>
+<NavigationProperty Name="Category" Relationship="NW.Product_Category" FromRole="Products" ToRole="Category"/>
+<NavigationProperty Name="Supplier" Relationship="NW.Product_Supplier" FromRole="Products" ToRole="Supplier"/></EntityType>
+<EntityType Name="Category"><Key><PropertyRef Name="CategoryID"/></Key>
+<Property Name="CategoryID" Type="Edm.Int32" Nullable="false" sap:label="Category ID"/>
+<Property Name="CategoryName" Type="Edm.String" sap:label="Category"/>
+<NavigationProperty Name="Products" Relationship="NW.Product_Category" FromRole="Category" ToRole="Products"/></EntityType>
+<EntityType Name="Supplier"><Key><PropertyRef Name="SupplierID"/></Key>
+<Property Name="SupplierID" Type="Edm.Int32" Nullable="false" sap:label="Supplier ID"/>
+<Property Name="CompanyName" Type="Edm.String" sap:label="Company"/>
+<Property Name="Country" Type="Edm.String" sap:label="Country"/></EntityType>
+<Association Name="Product_Category"><End Role="Category" Type="NW.Category" Multiplicity="0..1"/><End Role="Products" Type="NW.Product" Multiplicity="*"/></Association>
+<Association Name="Product_Supplier"><End Role="Supplier" Type="NW.Supplier" Multiplicity="0..1"/><End Role="Products" Type="NW.Product" Multiplicity="*"/></Association>
+<EntityContainer Name="NWEntities" m:IsDefaultEntityContainer="true"><EntitySet Name="Products" EntityType="NW.Product"/><EntitySet Name="Categories" EntityType="NW.Category"/><EntitySet Name="Suppliers" EntityType="NW.Supplier"/></EntityContainer>
+</Schema></edmx:DataServices></edmx:Edmx>`;
+const SAMPLE_V4=`<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx"><edmx:DataServices><Schema Namespace="NW" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+<EntityType Name="Product"><Key><PropertyRef Name="ProductID"/></Key><Property Name="ProductID" Type="Edm.Int32" Nullable="false"/><Property Name="ProductName" Type="Edm.String"/><Property Name="UnitPrice" Type="Edm.Decimal"/><Property Name="ReleaseDate" Type="Edm.Date"/><Property Name="Updated" Type="Edm.DateTimeOffset"/><Property Name="Ref" Type="Edm.Guid"/><NavigationProperty Name="Category" Type="NW.Category"/></EntityType>
+<EntityType Name="Category"><Key><PropertyRef Name="CategoryID"/></Key><Property Name="CategoryID" Type="Edm.Int32" Nullable="false"/><Property Name="CategoryName" Type="Edm.String"/><NavigationProperty Name="Products" Type="Collection(NW.Product)"/></EntityType>
+<EntityContainer Name="Container"><EntitySet Name="Products" EntityType="NW.Product"/><EntitySet Name="Categories" EntityType="NW.Category"/></EntityContainer></Schema></edmx:DataServices></edmx:Edmx>`;
+
+// ---------- metadata parser ----------
+const last=n=>(n||"").replace(/^Collection\(|\)$/g,"").split(".").pop();
+function parseMeta(xml){
+  const d=new DOMParser().parseFromString(xml,"application/xml");
+  if(d.querySelector("parsererror"))throw new Error("Not valid XML");
+  const root=d.documentElement; if(!/Edmx$/.test(root.localName))throw new Error("Not an EDMX $metadata document");
+  const ver=(root.getAttribute("Version")||"").startsWith("4")?"V4":"V2";
+  const all=(el,n)=>[...el.getElementsByTagNameNS("*",n)];
+  const assoc={};
+  all(d,"Association").forEach(a=>assoc[a.getAttribute("Name")]=Object.fromEntries(all(a,"End").map(e=>[e.getAttribute("Role"),e.getAttribute("Type")])));
+  const types={};
+  all(d,"EntityType").forEach(t=>{
+    types[t.getAttribute("Name")]={
+      keys:all(t,"PropertyRef").map(k=>k.getAttribute("Name")),
+      props:all(t,"Property").map(p=>({name:p.getAttribute("Name"),type:p.getAttribute("Type"),label:p.getAttribute("sap:label"),
+        filterable:p.getAttribute("sap:filterable")!=="false",sortable:p.getAttribute("sap:sortable")!=="false"})),
+      navs:all(t,"NavigationProperty").map(n=>({name:n.getAttribute("Name"),
+        target:ver==="V4"?last(n.getAttribute("Type")):last((assoc[last(n.getAttribute("Relationship"))]||{})[n.getAttribute("ToRole")])}))};
+  });
+  const sets=all(d,"EntitySet").map(e=>({name:e.getAttribute("Name"),type:last(e.getAttribute("EntityType"))})).filter(s=>types[s.type]);
+  if(!sets.length)throw new Error("No entity sets found");
+  return{ver,types,sets};
+}
+
+// ---------- query state ----------
+let meta=null,Q=null,tab="url";
+const fresh=es=>({es,select:[],filters:[],expand:[],ob:"",dir:"asc",top:"",skip:"",count:false,join:"and"});
+const typeOf=()=>meta.types[meta.sets.find(s=>s.name===Q.es).type];
+const prop=n=>typeOf().props.find(p=>p.name===n);
+
+// ---------- pure generators ----------
+function lit(type,v,ver){
+  v=String(v);
+  if(type==="Edm.String")return"'"+v.replace(/'/g,"''")+"'";
+  if(type==="Edm.Int64"&&ver==="V2")return v+"L";
+  if(/Edm\.(Int|Byte|SByte)/.test(type)||type==="Edm.Boolean")return v;
+  if(type==="Edm.DateTime"||type==="Edm.DateTimeOffset"){
+    if(v.length===16)v+=":00";
+    if(ver==="V2")return(type==="Edm.DateTime"?"datetime'":"datetimeoffset'")+v+"'";
+    return type==="Edm.DateTimeOffset"&&!/Z|[+-]\d\d:\d\d$/.test(v)?v+"Z":v;
+  }
+  if(type==="Edm.Guid")return ver==="V2"?"guid'"+v+"'":v;
+  if(ver==="V2"){if(type==="Edm.Decimal")return v+"M";if(type==="Edm.Single")return v+"f";if(type==="Edm.Double")return v+"d"}
+  return v;
+}
+const OPS=["eq","ne","gt","ge","lt","le","contains","startswith","endswith"];
+function clause(f,ver,types){
+  const t=types[f.f]||"Edm.String",v=lit(t,f.v,ver);
+  if(f.op==="contains")return ver==="V2"?`substringof(${v},${f.f})`:`contains(${f.f},${v})`;
+  if(f.op==="startswith"||f.op==="endswith")return`${f.op}(${f.f},${v})`;
+  return`${f.f} ${f.op} ${v}`;
+}
+const enc=s=>encodeURIComponent(s).replace(/%2C/g,",").replace(/%2F/g,"/").replace(/%3A/g,":");
+function buildUrl(q,ver,base,types){
+  const p=[],ok=q.filters.filter(f=>f.f&&f.v!=="");
+  if(q.select.length)p.push("$select="+enc(q.select.join(",")));
+  if(ok.length)p.push("$filter="+enc(ok.map(f=>clause(f,ver,types)).join(` ${q.join} `)));
+  if(q.expand.length)p.push("$expand="+enc(q.expand.join(",")));
+  if(q.ob)p.push("$orderby="+enc(q.ob+(q.dir==="desc"?" desc":"")));
+  if(q.top!=="")p.push("$top="+q.top);
+  if(q.skip!=="")p.push("$skip="+q.skip);
+  if(q.count)p.push(ver==="V2"?"$inlinecount=allpages":"$count=true");
+  return base.replace(/\/+$/,"")+"/"+q.es+(p.length?"?"+p.join("&"):"");
+}
+const toCurl=u=>`curl -H "Accept: application/json" "${u}"`;
+const toFetch=u=>`const res = await fetch("${u}", {\n  headers: { Accept: "application/json" }\n});\nif (!res.ok) throw new Error(res.status);\nconst data = await res.json();`;
+const FOP={eq:"EQ",ne:"NE",gt:"GT",ge:"GE",lt:"LT",le:"LE",contains:"Contains",startswith:"StartsWith",endswith:"EndsWith"};
+function jsVal(t,v){return/Edm\.(Int|Byte|SByte|Decimal|Double|Single)/.test(t)&&v!==""&&!isNaN(v)&&t!=="Edm.Decimal"?Number(v):t==="Edm.Boolean"?v==="true":t==="Edm.Decimal"&&!isNaN(v)?Number(v):JSON.stringify(v)}
+function ui5Filters(q,types){
+  const ok=q.filters.filter(f=>f.f&&f.v!=="");
+  const arr=ok.map(f=>`new Filter("${f.f}", FilterOperator.${FOP[f.op]}, ${jsVal(types[f.f]||"Edm.String",f.v)})`);
+  return{arr,or:q.join==="or"&&arr.length>1};
+}
+const IMPORTS=`// sap.ui.require(["sap/ui/model/Filter", "sap/ui/model/FilterOperator", "sap/ui/model/Sorter"], function (Filter, FilterOperator, Sorter) { ... });\n`;
+function toUi5V2(q,types){
+  const {arr,or}=ui5Filters(q,types),o=[],up=[];
+  if(arr.length)o.push("  filters: "+(or?`[new Filter({ filters: [\n    ${arr.join(",\n    ")}\n  ], and: false })]`:`[\n    ${arr.join(",\n    ")}\n  ]`));
+  if(q.ob)o.push(`  sorters: [new Sorter("${q.ob}", ${q.dir==="desc"})]`);
+  if(q.select.length)up.push(`"$select": "${q.select.join(",")}"`);
+  if(q.expand.length)up.push(`"$expand": "${q.expand.join(",")}"`);
+  if(q.top!=="")up.push(`"$top": ${q.top}`);
+  if(q.skip!=="")up.push(`"$skip": ${q.skip}`);
+  if(q.count)up.push(`"$inlinecount": "allpages"`);
+  if(up.length)o.push(`  urlParameters: { ${up.join(", ")} }`);
+  o.push(`  success: function (oData) { console.log(oData.results); },\n  error: function (oErr) { console.error(oErr); }`);
+  return IMPORTS+`oModel.read("/${q.es}", {\n${o.join(",\n")}\n});`;
+}
+function toUi5V4(q,types){
+  const {arr,or}=ui5Filters(q,types),pr=[];
+  if(q.select.length)pr.push(`$select: "${q.select.join(",")}"`);
+  if(q.expand.length)pr.push(`$expand: "${q.expand.join(",")}"`);
+  if(q.count)pr.push("$count: true");
+  const f=arr.length?(or?`[new Filter({ filters: [\n  ${arr.join(",\n  ")}\n], and: false })]`:`[\n  ${arr.join(",\n  ")}\n]`):"[]";
+  const s=q.ob?`[new Sorter("${q.ob}", ${q.dir==="desc"})]`:"[]";
+  return IMPORTS+`const oBinding = oModel.bindList("/${q.es}", null, ${s}, ${f}, {\n  ${pr.join(",\n  ")}\n});\nconst aContexts = await oBinding.requestContexts(${q.skip||0}, ${q.top||100});\nconst aData = aContexts.map(c => c.getObject());`;
+}
+function outputs(){
+  const types={};typeOf().props.forEach(p=>types[p.name]=p.type);
+  const u=buildUrl(Q,meta.ver,$("#base").value.trim(),types);
+  return{url:u,curl:toCurl(u),fetch:toFetch(u),ui5:meta.ver==="V2"?toUi5V2(Q,types):toUi5V4(Q,types)};
+}
+
+// ---------- UI ----------
+const TABS={url:"URL",curl:"curl",fetch:"fetch",ui5:"UI5 code"};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function renderOut(){
+  $("#tabs").innerHTML=Object.entries(TABS).map(([k,v])=>`<button data-t="${k}" class="${k===tab?"on":""}">${v}</button>`).join("");
+  $("#out").textContent=outputs()[tab];
+}
+function inputFor(f,i){
+  const t=(prop(f.f)||{}).type||"Edm.String";
+  if(t==="Edm.Boolean")return`<select data-fv="${i}"><option>true</option><option>false</option></select>`;
+  const ty=t==="Edm.DateTime"||t==="Edm.DateTimeOffset"?"datetime-local":t==="Edm.Date"?"date":/Edm\.(Int|Decimal|Double|Single|Byte)/.test(t)?"number":"text";
+  return`<input type="${ty}" step="any" data-fv="${i}" value="${esc(f.v)}" style="flex:1;min-width:110px">`;
+}
+function renderFilters(){
+  const props=typeOf().props.filter(p=>p.filterable);
+  $("#flt").innerHTML=Q.filters.map((f,i)=>`<div class="row"><select data-ff="${i}">${props.map(p=>`<option value="${p.name}" ${p.name===f.f?"selected":""}>${esc(p.label||p.name)}</option>`).join("")}</select>
+  <select data-fo="${i}">${OPS.map(o=>`<option ${o===f.op?"selected":""}>${o}</option>`).join("")}</select>${inputFor(f,i)}<button data-fx="${i}">✕</button></div>`).join("")||'<div class="mu" style="margin-bottom:6px">No filters</div>';
+}
+function renderEntity(){
+  const t=typeOf();
+  $("#sel").innerHTML=t.props.map(p=>`<label><input type="checkbox" data-s="${p.name}" ${Q.select.includes(p.name)?"checked":""}>${p.name}${t.keys.includes(p.name)?" 🔑":""} <small>${esc(p.label&&p.label!==p.name?p.label+" · ":"")}${p.type.replace("Edm.","")}</small></label>`).join("");
+  $("#exp").innerHTML=t.navs.length?t.navs.map(n=>`<label><input type="checkbox" data-e="${n.name}" ${Q.expand.includes(n.name)?"checked":""}>${n.name} <small>→ ${n.target}</small></label>`).join(""):'<span class="mu">No navigation properties</span>';
+  $("#ob").innerHTML='<option value="">(no $orderby)</option>'+t.props.filter(p=>p.sortable).map(p=>`<option value="${p.name}" ${Q.ob===p.name?"selected":""}>${esc(p.label||p.name)}</option>`).join("");
+  renderFilters();
+}
+function load(xml){
+  try{meta=parseMeta(xml)}catch(e){$("#msg").innerHTML=`<span class="err">${esc(e.message)}</span>`;return}
+  Q=fresh(meta.sets[0].name);
+  $("#es").innerHTML=meta.sets.map(s=>`<option>${s.name}</option>`).join("");
+  $("#builder").hidden=false;$("#ver").hidden=false;$("#ver").textContent="OData "+meta.ver;
+  $("#msg").textContent=`${meta.ver}: ${meta.sets.length} entity sets, ${Object.keys(meta.types).length} entity types`;
+  ["top","skip"].forEach(k=>$("#"+k).value="");$("#cnt").checked=false;
+  renderEntity();renderOut();
+}
+$("#load").onclick=()=>load($("#xml").value.trim());
+$("#s2").onclick=()=>{$("#xml").value=SAMPLE_V2;$("#base").value="https://services.odata.org/V2/Northwind/Northwind.svc";load(SAMPLE_V2)};
+$("#s4").onclick=()=>{$("#xml").value=SAMPLE_V4;$("#base").value="https://services.odata.org/v4/northwind/northwind.svc";load(SAMPLE_V4)};
+$("#file").onchange=async e=>{const f=e.target.files[0];if(f){$("#xml").value=await f.text();load($("#xml").value)}};
+$("#base").oninput=()=>meta&&renderOut();
+$("#es").onchange=e=>{Q=Object.assign(fresh(e.target.value),{top:Q.top,skip:Q.skip,count:Q.count,join:Q.join});renderEntity();renderOut()};
+$("#addf").onclick=()=>{const p=typeOf().props.find(p=>p.filterable);if(!p)return;Q.filters.push({f:p.name,op:"eq",v:""});renderFilters();renderOut()};
+$("#join").onchange=e=>{Q.join=e.target.value;renderOut()};
+$("#ob").onchange=e=>{Q.ob=e.target.value;renderOut()};
+$("#dir").onchange=e=>{Q.dir=e.target.value;renderOut()};
+$("#top").oninput=e=>{Q.top=e.target.value;renderOut()};
+$("#skip").oninput=e=>{Q.skip=e.target.value;renderOut()};
+$("#cnt").onchange=e=>{Q.count=e.target.checked;renderOut()};
+$("#sel").onchange=e=>{const n=e.target.dataset.s;Q.select=e.target.checked?[...Q.select,n]:Q.select.filter(x=>x!==n);renderOut()};
+$("#exp").onchange=e=>{const n=e.target.dataset.e;Q.expand=e.target.checked?[...Q.expand,n]:Q.expand.filter(x=>x!==n);renderOut()};
+$("#flt").addEventListener("input",e=>{const d=e.target.dataset;
+  if(d.ff!==undefined){Q.filters[d.ff].f=e.target.value;Q.filters[d.ff].v="";renderFilters()}
+  else if(d.fo!==undefined)Q.filters[d.fo].op=e.target.value;
+  else if(d.fv!==undefined)Q.filters[d.fv].v=e.target.value;
+  renderOut()});
+$("#flt").onclick=e=>{const i=e.target.dataset.fx;if(i!==undefined){Q.filters.splice(i,1);renderFilters();renderOut()}};
+// select-type value defaults (boolean) need an initial value
+$("#flt").addEventListener("focusin",e=>{const i=e.target.dataset.fv;if(i!==undefined&&e.target.tagName==="SELECT"&&Q.filters[i].v===""){Q.filters[i].v=e.target.value;renderOut()}});
+$("#tabs").onclick=e=>{if(e.target.dataset.t){tab=e.target.dataset.t;renderOut()}};
+$("#copy").onclick=async()=>{try{await navigator.clipboard.writeText($("#out").textContent);$("#ok").textContent="Copied"}catch(_){$("#ok").textContent="Select the text and copy manually"}setTimeout(()=>$("#ok").textContent="",1800)};
+$("#s2").click();
+</script></body></html>
